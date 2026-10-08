@@ -1,24 +1,17 @@
-"""Train-only preprocessing and inference shared by all UI modes."""
+"""Inference using the bundled pretrained classifier and scaler."""
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
-from threadpoolctl import threadpool_limits
 
 FEATURES = ['Machine', 'DebugSize', 'DebugRVA', 'MajorImageVersion', 'MajorOSVersion', 'ExportRVA', 'ExportSize', 'IatVRA', 'MajorLinkerVersion', 'MinorLinkerVersion', 'NumberOfSections', 'SizeOfStackReserve', 'DllCharacteristics', 'ResourceSize', 'BitcoinAddresses']
 ENGINEERED = ['HasDebugInfo', 'HasExportTable', 'HasBitcoinAddress', 'LinkerVersion']
-DATA_PATH = Path(__file__).parent / 'data_file.csv'
 
 def validate(frame):
     if frame.empty:
-        raise ValueError('The CSV contains no records.')
+        raise ValueError('No feature records were provided.')
     if len(frame) > 100_000:
-        raise ValueError('Please upload at most 100,000 records per batch.')
+        raise ValueError('Too many feature records; the limit is 100,000.')
     missing = [c for c in FEATURES if c not in frame.columns]
     if missing:
         raise ValueError('Missing required columns: ' + ', '.join(missing))
@@ -55,10 +48,9 @@ def load_saved_model():
         raise ValueError('Model and feature list do not match. Export all files together.')
     evaluation = root / 'evaluation.json'
     details = json.loads(evaluation.read_text()) if evaluation.exists() else None
-    data = pd.read_csv(DATA_PATH)
     machines = {int(c.removeprefix('Machine_')) for c in columns if c.startswith('Machine_')}
     bundle = {'classifier': classifier, 'scaler': scaler, 'columns': columns,
-              'data': data, 'machines': machines, 'evaluation': details}
+              'machines': machines, 'evaluation': details}
     if details:
         bundle.update(test_y=pd.Series(details['test_y']),
                       test_probability=np.array(details['ransomware_probability']),

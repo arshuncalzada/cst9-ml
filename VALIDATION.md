@@ -1,12 +1,14 @@
 # Validation summary
 
-- Byte-level PE32 (32-bit) and PE32+ (64-bit) synthetic header fixtures parsed successfully.
-- DLL flag, data-directory offsets, major/minor version headers, 32/64-bit stack reserve, feature names, and legacy Bitcoin address detection tested.
-- Invalid or oversized files rejected without being executed.
-- The extracted 15 fields match the existing `model.FEATURES` schema.
-- Both synthetic PE fixture types were passed through `load_saved_model()` / `predict()` with the **bundled real saved model**; predictions were successfully returned.
-- `evaluation.json` is from a `kagglehub` run; the saved test-label/probability results produce approximately 91.01% accuracy. This does **not** validate detection performance on newly uploaded executable files.
-- `app.py`, `model.py`, and `pe_extractor.py` compiled successfully.
-- The Streamlit GUI itself was **not runtime-tested locally** because the Streamlit package is not installed in this offline testing environment. GitHub/Streamlit Cloud deployment was not performed here.
-- `requirements.txt` pins scikit-learn 1.6.1 to match the exported model's recorded training version; local inference tests used the runtime's installed 1.8.0, so the cloud build should be checked with pinned requirements.
-- BitcoinAddresses from file bytes is heuristic and may not match the Kaggle dataset's extraction method. Generalization to real executables has not been assessed.
+Validated with Streamlit 1.50.0 and scikit-learn 1.6.1, matching requirements.txt.
+
+- All four existing PE extractor tests pass, covering PE32/PE32+, DLL flags, feature extraction, Bitcoin-address heuristics, and invalid/oversized input rejection.
+- Both synthetic PE32 and PE32+ fixtures pass through the bundled saved classifier and return predictions.
+- Streamlit AppTest starts the redesigned application without exceptions, with data_file.csv removed.
+- The three expected tabs render: File scan, Manual analysis, Model results.
+- Submitting the manual feature form returns a model prediction without exceptions.
+- Model artifacts and PE extraction code remain unchanged from the uploaded project.
+- Browser visual inspection and browser file-upload interaction were not completed: the browser binary was unavailable and its download failed. AppTest checks do not verify CSS layout or the native upload interaction.
+- No deployment was performed.
+
+These checks verify application behavior, not detection accuracy. Synthetic fixtures are not real malware samples. The original evaluation has preprocessing leakage from scaling before splitting; uploaded-executable accuracy remains unvalidated.

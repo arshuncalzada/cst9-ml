@@ -1,187 +1,165 @@
+"""Streamlit interface for the bundled, pretrained ransomware classifier."""
+from html import escape
 from pathlib import Path
+import json
 import pandas as pd
 import streamlit as st
-from model import DATA_PATH, FEATURES, load_saved_model, predict, metrics
+from model import FEATURES, load_saved_model, predict, metrics
 from pe_extractor import MAX_PE_BYTES, PEFormatError, extract_pe_features
 
-st.set_page_config(page_title='Ransomware Detection Lab', page_icon='🛡️', layout='wide')
+st.set_page_config(page_title='Ransomware Detection Lab', page_icon='🛡', layout='wide')
 st.markdown('''<style>
-.block-container {max-width:1250px;padding-top:2.5rem}
-[data-testid="stMetric"] {background:#152238;border:1px solid #2b405b;border-radius:12px;padding:16px}
-h1 {letter-spacing:-1.4px}
+.block-container {max-width:1120px;padding-top:2.6rem;padding-bottom:3rem}
+[data-testid="stAppViewContainer"] {background:radial-gradient(ellipse at 90% 0%,#14302e 0%,#0b111b 48%)}
+h1,h2,h3 {font-weight:600!important;letter-spacing:-.035em}
+h1 {font-size:2.65rem!important;line-height:1.15!important}
+p {line-height:1.6}
+.brand {display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #27333f;padding-bottom:22px;margin-bottom:30px;gap:16px}
+.brand-name {font:600 16px ui-monospace,monospace;letter-spacing:.06em;color:#e8eff3}
+.shield {display:inline-block;color:#69e5b3;margin-right:10px;font-size:23px}
+.status {font:13px ui-monospace,monospace;color:#83e9bb;border:1px solid #315348;background:#142920;padding:8px 12px;border-radius:4px;white-space:nowrap}
+.intro {color:#a8b7c6;margin:0 0 30px;font-size:17px}
+[data-baseweb="tab-list"] {gap:24px;border-bottom:1px solid #27333f;margin-bottom:26px}
+[data-baseweb="tab"] {font-size:16px;padding:14px 0}
+[data-testid="stVerticalBlockBorderWrapper"]>div {border-color:#2a3945!important;border-radius:8px!important}
+[data-testid="stFileUploaderDropzone"] {background:#101d28;border:1px dashed #446357;border-radius:6px;padding:30px 20px}
+[data-testid="stMetric"] {background:#111e29;border:1px solid #2a3945;border-radius:6px;padding:18px}
+[data-testid="stMetricLabel"] {color:#abbac7}
+[data-testid="stMetricValue"] {font-family:ui-monospace,monospace;font-size:1.8rem}
+.stButton>button[kind="primary"] {border-radius:4px;font-weight:600;min-height:46px}
+.empty {padding:42px 20px;text-align:center;border:1px solid #2a3945;border-radius:6px;background:#101923;margin-top:20px;color:#acbbc8}
+.empty-icon {font:36px ui-monospace,monospace;color:#638674;margin-bottom:12px}
+.result {border:1px solid #376450;border-left:4px solid #69e5b3;padding:22px 26px;background:#11271f;border-radius:6px;margin:18px 0}
+.result.flagged {border-color:#844747;border-left-color:#ff8585;background:#2b1a21}
+.result h2 {padding:0!important;margin:5px 0 8px!important}
+.result p {margin:0;color:#c2ccd5;overflow-wrap:anywhere}
+.result-label {font:13px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.1em;color:#b8c8d4}
+.footer {border-top:1px solid #27333f;margin-top:32px;padding-top:18px;color:#9eafbe;font-size:14px}
+@media(max-width:600px) {.block-container{padding-top:1.5rem}h1{font-size:2rem!important}.brand{align-items:flex-start;flex-direction:column}[data-baseweb="tab-list"]{gap:18px}.status{font-size:12px}}
 </style>''', unsafe_allow_html=True)
 
-@st.cache_resource(show_spinner='Loading your saved notebook model…')
+@st.cache_resource(show_spinner='Loading model…')
 def load_model(version):
     return load_saved_model()
 
-st.caption('STATIC PE ANALYSIS  /  MACHINE LEARNING LAB')
-st.title('Ransomware Detection Lab')
-st.write('Upload a Windows PE file or enter PE features to classify with your saved Logistic Regression model.')
 try:
     artifact_dir = Path(__file__).parent / 'artifacts'
     versions = tuple(p.stat().st_mtime_ns for p in sorted(artifact_dir.glob('*')) if p.is_file())
     bundle = load_model(versions)
-except (OSError, ValueError) as exc:
-    st.error(f'Could not load your saved model: {exc}')
-    st.info('Check that the three saved .joblib files are inside artifacts/ and data_file.csv is beside app.py. See README.md.')
+except (OSError, ValueError, KeyError, EOFError) as exc:
+    st.error(f'Could not load the saved model: {exc}')
+    st.info('Restore the three .joblib files in the artifacts folder, then restart the app.')
     st.stop()
 
-with st.sidebar:
-    st.title('🛡️ Detection Lab')
-    st.caption('LOGISTIC REGRESSION')
-    st.divider()
-    threshold = st.slider('Ransomware threshold', .05, .95, .50, .05,
-                          help='Classify as ransomware when its model probability reaches this value.')
-    st.caption('Lower thresholds flag more files and may increase false positives.')
-    st.divider()
-    st.write('**Saved notebook model**')
-    st.caption('No model training takes place in this app.')
-    st.info('Research prototype. A benign prediction is not proof that a file is safe.')
+st.markdown('<div class="brand"><div class="brand-name"><span class="shield">◇</span>DETECTION LAB</div><div class="status">● &nbsp; Trained model loaded</div></div>', unsafe_allow_html=True)
+st.title('Ransomware detection')
+st.markdown('<p class="intro">Inspect a Windows executable with the trained model.</p>', unsafe_allow_html=True)
+scan, manual, performance = st.tabs(['File scan', 'Manual analysis', 'Model results'])
+THRESHOLD = .50
 
-summary = metrics(bundle, threshold) if bundle['evaluation'] else None
-if summary:
-    for col, label in zip(st.columns(4), ['Accuracy', 'Ransomware precision', 'Ransomware recall', 'Ransomware F1']):
-        col.metric(label, f'{summary[label]:.2%}')
-    st.caption('Exported notebook test split. Ransomware is the positive class in this UI.')
-else:
-    st.info('Export evaluation.json with the notebook cell to show evaluation metrics.')
-pe_upload, single, batch, performance, about = st.tabs([
-    'Upload .exe / .dll', 'Single prediction', 'Batch CSV', 'Model performance', 'How it works'
-])
+def show_result(outcome, name):
+    flagged = outcome['Prediction'] == 'Ransomware'
+    css = 'result flagged' if flagged else 'result'
+    label = 'Ransomware detected' if flagged else 'Classified as benign'
+    st.markdown(f'<div class="{css}"><div class="result-label">Model prediction</div><h2>{label}</h2><p>{escape(name)}</p></div>', unsafe_allow_html=True)
+    st.metric('Ransomware probability', f"{outcome['Ransomware probability']:.2%}")
+    st.progress(float(outcome['Ransomware probability']))
+    if bool(outcome['Unseen machine code']):
+        st.warning('This processor type was not seen during training. The prediction may be unreliable.')
 
-with pe_upload:
-    st.subheader('Upload a Windows executable or DLL')
-    st.write('Extract static PE-header features and classify them using your existing saved Logistic Regression model.')
-    st.info('**Static analysis only.** The file is read as bytes, never executed or installed. This is an educational prototype, not an antivirus replacement.')
-    st.caption('Maximum upload: 20 MiB. Only Windows PE32/PE32+ files are supported; other formats will be rejected.')
-    st.warning('Avoid uploading real suspected malware to a shared cloud service. For untrusted samples, use an appropriately isolated local analysis environment.')
-    uploaded_pe = st.file_uploader('Select a .exe or .dll file', type=['exe', 'dll'], key='uploaded_pe')
-    if uploaded_pe is not None:
-        try:
-            if uploaded_pe.size > MAX_PE_BYTES:
-                raise PEFormatError('The file exceeds the 20 MiB limit.')
-            with st.spinner('Reading PE headers and extracting static features…'):
-                info = extract_pe_features(uploaded_pe.getvalue())
-                extracted = pd.DataFrame([info.features], columns=FEATURES)
-                outcome = predict(bundle, extracted, threshold).iloc[0]
+with scan:
+    left, right = st.columns([1.75, 1], gap='large')
+    with left:
+        st.subheader('Scan a file')
+        uploaded = st.file_uploader('Windows executable · .exe or .dll · up to 20 MiB', type=['exe', 'dll'], key='uploaded_pe')
+        analyze = st.button('Analyze file', type='primary', disabled=uploaded is None, use_container_width=True)
+    with right:
+        with st.container(border=True):
+            st.subheader('Static inspection')
+            st.write('Files are read, never executed.')
             st.divider()
-            if outcome['Prediction'] == 'Ransomware':
-                st.error('Model prediction: Ransomware')
-            else:
-                st.success('Model prediction: Benign')
-            c1, c2, c3 = st.columns(3)
-            c1.metric('Estimated ransomware probability', f"{outcome['Ransomware probability']:.2%}")
-            c2.metric('PE format', info.pe_kind)
-            c3.metric('File size', f'{info.size_bytes / (1024 * 1024):.2f} MiB')
-            st.progress(float(outcome['Ransomware probability']))
-            st.caption(f'File: {uploaded_pe.name} | SHA-256: {info.sha256}')
-            st.caption(f'Applied ransomware decision threshold: {threshold:.0%}. Probabilities are not calibrated guarantees.')
-            if info.is_dll != uploaded_pe.name.lower().endswith('.dll'):
-                st.warning('The PE file header type and filename extension disagree. Classification still uses the extracted PE features.')
-            if bool(outcome['Unseen machine code']):
-                st.warning('This CPU Machine value was not observed during training. The classification may be unreliable.')
-            st.warning('**Experimental file-upload prediction:** Real-file detection accuracy was not measured. ' + info.wallet_scan_note)
-            with st.expander('See extracted features', expanded=True):
-                st.dataframe(extracted.T.rename(columns={0: 'Extracted value'}), width='stretch')
-            safe_file_name = uploaded_pe.name
-            if safe_file_name.lstrip().startswith(('=', '+', '-', '@')):
-                safe_file_name = "'" + safe_file_name
-            export = pd.DataFrame([{'FileName': safe_file_name, **info.features}])
-            st.download_button('Download extracted features (CSV)', export.to_csv(index=False),
-                               file_name='extracted_pe_features.csv', mime='text/csv')
+            st.write('**Model**  ·  Logistic regression')
+            st.write('**Input**  ·  Windows PE file')
+            st.write('**Decision threshold**  ·  50%')
+    # Changing or removing the selected file must never show an old verdict.
+    current_id = (uploaded.name, uploaded.size, uploaded.file_id) if uploaded is not None else None
+    if st.session_state.get('selected_file') != current_id:
+        st.session_state.pop('scan_result', None)
+        st.session_state.selected_file = current_id
+    if analyze and uploaded is not None:
+        st.session_state.pop('scan_result', None)
+        try:
+            if uploaded.size > MAX_PE_BYTES:
+                raise PEFormatError('The file exceeds the 20 MiB limit.')
+            with st.spinner('Analyzing file…'):
+                info = extract_pe_features(uploaded.getvalue())
+                extracted = pd.DataFrame([info.features], columns=FEATURES)
+                outcome = predict(bundle, extracted, THRESHOLD).iloc[0]
+            st.session_state.scan_result = (uploaded.name, info, extracted, outcome)
         except (PEFormatError, ValueError, TypeError) as exc:
-            st.error(f'Unable to analyze this PE file: {exc}')
+            st.error(f'Unable to analyze this file: {exc}')
+    if 'scan_result' in st.session_state:
+        name, info, extracted, outcome = st.session_state.scan_result
+        show_result(outcome, name)
+        a, b = st.columns(2)
+        a.metric('File format', info.pe_kind)
+        b.metric('File size', f'{info.size_bytes / 1024:.1f} KiB')
+        if info.is_dll != name.lower().endswith('.dll'):
+            st.warning('The file extension does not match its PE header type.')
+        with st.expander('File details'):
+            st.write('**SHA-256**')
+            st.code(info.sha256, language=None)
+            st.dataframe(extracted.T.rename(columns={0: 'Value'}), width='stretch')
+            st.write(info.wallet_scan_note)
+        report = {'filename': name, 'sha256': info.sha256, 'prediction': str(outcome['Prediction']),
+                  'ransomware_probability': float(outcome['Ransomware probability']),
+                  'threshold': THRESHOLD, 'features': info.features,
+                  'limitations': 'Experimental static classifier. A benign prediction does not guarantee safety. Real-file detection accuracy has not been validated.'}
+        st.download_button('Download report', json.dumps(report, indent=2), file_name='scan_report.json', mime='application/json')
+    elif not analyze:
+        st.markdown('<div class="empty"><div class="empty-icon">[ + ]</div><strong>Ready for inspection</strong><p>Select a file and run an analysis.</p></div>', unsafe_allow_html=True)
 
-
-with single:
-    st.subheader('Inspect one feature record')
-    st.write('Enter pre-extracted numeric features or load a dataset example. To analyze a PE file directly, use the first tab.')
-    source = st.selectbox('Starting values', ['Manual entry (zeros)', 'Dataset example: benign', 'Dataset example: ransomware'])
-    if source == 'Manual entry (zeros)':
-        defaults = dict.fromkeys(FEATURES, 0)
-    else:
-        label = 1 if source.endswith('benign') else 0
-        defaults = bundle['data'].loc[bundle['data'].Benign == label, FEATURES].iloc[0].to_dict()
-        st.caption('Dataset examples demonstrate the UI; they are not independent validation samples.')
+with manual:
+    st.subheader('Analyze PE features')
+    st.write('Enter a file’s extracted values for a single prediction.')
     with st.form('feature_input'):
         cols = st.columns(3)
-        values = {}
-        for i, feature in enumerate(FEATURES):
-            values[feature] = cols[i % 3].number_input(feature, min_value=0, max_value=2**53-1,
-                value=int(defaults[feature]), step=1, key=f'{source}_{feature}')
+        values = {feature: cols[i % 3].number_input(feature, min_value=0, max_value=2**53-1, value=0, step=1)
+                  for i, feature in enumerate(FEATURES)}
         submitted = st.form_submit_button('Analyze record', type='primary')
     if submitted:
-        st.session_state['single_values'] = values
-    if 'single_values' in st.session_state:
-        record = pd.DataFrame([st.session_state['single_values']])
-        result = predict(bundle, record, threshold).iloc[0]
-        st.divider()
-        st.caption('LAST SUBMITTED RECORD · Submit again after editing fields')
-        if result['Prediction'] == 'Ransomware':
-            st.error('Prediction: Ransomware')
-        else:
-            st.success('Prediction: Benign')
-        st.metric('Estimated ransomware probability', f"{result['Ransomware probability']:.2%}")
-        st.progress(float(result['Ransomware probability']))
-        st.caption(f'Decision threshold: {threshold:.0%}. Model probabilities are not calibrated risk guarantees.')
-        if result['Unseen machine code']:
-            st.warning('This machine code was not present in training. Treat this result with extra caution.')
-        with st.expander('Submitted feature values'):
-            st.dataframe(record, hide_index=True, width='stretch')
-
-with batch:
-    st.subheader('Classify a CSV batch')
-    st.write('One file record per row. Use the 15 raw feature columns; FileName and md5Hash are optional. Benign is ignored during prediction.')
-    sample = bundle['data'].groupby('Benign', group_keys=False).head(3)[['FileName'] + FEATURES]
-    st.download_button('Download example CSV', sample.to_csv(index=False), 'example_features.csv', 'text/csv')
-    uploaded = st.file_uploader('Upload feature records', type=['csv'], help='Maximum 20 MB and 100,000 rows.')
-    if uploaded is not None:
         try:
-            if uploaded.size > 20 * 1024 * 1024:
-                raise ValueError('Please keep uploads below 20 MB.')
-            frame = pd.read_csv(uploaded)
-            result = predict(bundle, frame, threshold)
-            c1, c2, c3 = st.columns(3)
-            c1.metric('Records', f'{len(result):,}')
-            c2.metric('Flagged ransomware', f"{(result.Prediction == 'Ransomware').sum():,}")
-            c3.metric('Predicted benign', f"{(result.Prediction == 'Benign').sum():,}")
-            if result['Unseen machine code'].any():
-                st.warning('Some rows use unseen machine codes; these are marked in the results.')
-            st.dataframe(result.head(1000), hide_index=True, width='stretch')
-            st.caption('Preview shows up to 1,000 records; the download contains all results.')
-            # Prevent spreadsheet formula interpretation in untrusted text columns.
-            export = result.copy()
-            for c in export.select_dtypes(include=['object', 'string']).columns:
-                export[c] = export[c].map(lambda v: "'" + v if isinstance(v, str) and v.lstrip().startswith(('=', '+', '-', '@')) else v)
-            st.download_button('Download predictions', export.to_csv(index=False), 'predictions.csv', 'text/csv', type='primary')
-        except (ValueError, pd.errors.ParserError, UnicodeDecodeError) as exc:
-            st.error(f'Cannot analyze this CSV: {exc}')
+            record = pd.DataFrame([values], columns=FEATURES)
+            outcome = predict(bundle, record, THRESHOLD).iloc[0]
+            show_result(outcome, 'Submitted feature record')
+            with st.expander('Submitted values'):
+                st.dataframe(record.T.rename(columns={0: 'Value'}), width='stretch')
+        except (ValueError, TypeError) as exc:
+            st.error(f'Unable to analyze this record: {exc}')
 
 with performance:
-    st.subheader('Your saved notebook model')
-    if summary:
-        st.write('Data source: ' + bundle['evaluation'].get('data_source', 'Not recorded'))
-        st.write('Selected parameters:', bundle['evaluation'].get('best_params', {}))
-        c1, c2, c3 = st.columns(3)
-        c1.metric('Training records', f"{bundle['train_rows']:,}")
-        c2.metric('Test records', f"{bundle['test_rows']:,}")
-        c3.metric('ROC AUC', f"{summary['ROC AUC']:.4f}")
-        st.dataframe(pd.DataFrame(summary['confusion_matrix'], index=['Actual ransomware', 'Actual benign'], columns=['Predicted ransomware', 'Predicted benign']), width='stretch')
-        st.warning('The notebook fits its scaler before splitting. Test results may be optimistic. This UI preserves that preprocessing to match the saved model.')
+    st.subheader('Model evaluation')
+    if bundle['evaluation']:
+        summary = metrics(bundle, THRESHOLD)
+        for col, label, key in zip(st.columns(4), ['Accuracy', 'Precision', 'Recall', 'F1 score'],
+                                   ['Accuracy', 'Ransomware precision', 'Ransomware recall', 'Ransomware F1']):
+            col.metric(label, f'{summary[key]:.2%}')
+        st.write(f"Saved test split · {bundle['train_rows']:,} training records · {bundle['test_rows']:,} test records")
+        st.subheader('Confusion matrix')
+        st.dataframe(pd.DataFrame(summary['confusion_matrix'], index=['Actual ransomware', 'Actual benign'],
+                     columns=['Predicted ransomware', 'Predicted benign']), width='stretch')
+        st.warning('The original notebook scaled data before splitting. These test scores may be optimistic; they do not measure accuracy on uploaded executables.')
     else:
-        st.info('No exported evaluation data. The UI does not retrain or invent scores.')
-    coefficients = pd.Series(bundle['classifier'].coef_[0], index=bundle['columns'])
-    top = coefficients.reindex(coefficients.abs().nlargest(12).index).sort_values()
-    st.bar_chart(top, horizontal=True, color='#56d4b2')
-    st.caption('Positive coefficients favor benign; negative coefficients favor ransomware.')
+        st.info('No saved evaluation results are available.')
+    with st.expander('Model and limitations'):
+        st.write('The app loads the saved classifier, scaler and feature list. It does not train a model or require a dataset upload.')
+        st.write('Fifteen PE features are extracted, derived features are added, and values are transformed with the saved scaler. Labels: 0 = ransomware, 1 = benign.')
+        st.write('The Bitcoin-address feature is heuristic. Its extraction may differ from the training dataset. File scanning has not been independently validated.')
+        if bundle['evaluation']:
+            st.write('Data source: ' + bundle['evaluation'].get('data_source', 'Not recorded'))
+            st.write('Selected parameters:', bundle['evaluation'].get('best_params', {}))
+        weights = pd.Series(bundle['classifier'].coef_[0], index=bundle['columns'])
+        st.bar_chart(weights.reindex(weights.abs().nlargest(12).index).sort_values(), horizontal=True, color='#69e5b3')
+        st.write('Positive coefficients favor benign; negative coefficients favor ransomware.')
 
-with about:
-    st.subheader('Saved-model inference')
-    st.markdown("""This app loads the notebook's saved classifier, scaler, and feature-column list. It applies the same four derived features, aligns the one-hot Machine columns, and transforms values with the saved scaler. No fitting or hyperparameter search takes place here.
-
-At threshold 0.50, labels come directly from the classifier's predict method. Changing the threshold deliberately changes the decision rule.
-
-The included CSV provides UI examples only. The supplied evaluation.json records results from a Kagglehub dataset run. The notebook preprocessing has known leakage from fitting its scaler before splitting. The executable upload mode extracts PE headers plus a heuristic BitcoinAddresses indicator; this has not been validated as identical to the original dataset feature-extraction pipeline.
-
-Labels: **0 = ransomware; 1 = benign**. Executable uploads are parsed into feature records in memory and then classified; there is no execution, dynamic malware analysis, or guarantee of safety.""")
+st.markdown('<div class="footer">Research prototype. A benign prediction does not guarantee safety. Analyze untrusted samples only in an isolated local environment.</div>', unsafe_allow_html=True)
