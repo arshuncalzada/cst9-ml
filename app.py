@@ -2,6 +2,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from model import DATA_PATH, FEATURES, load_saved_model, predict, metrics
+from pe_extractor import MAX_PE_BYTES, PEFormatError, extract_pe_features
 
 st.set_page_config(page_title='Ransomware Detection Lab', page_icon='🛡️', layout='wide')
 st.markdown('''<style>
@@ -16,14 +17,14 @@ def load_model(version):
 
 st.caption('STATIC PE ANALYSIS  /  MACHINE LEARNING LAB')
 st.title('Ransomware Detection Lab')
-st.write('Explore file features, classify records, and understand your model’s performance.')
+st.write('Upload a Windows PE file or enter PE features to classify with your saved Logistic Regression model.')
 try:
     artifact_dir = Path(__file__).parent / 'artifacts'
     versions = tuple(p.stat().st_mtime_ns for p in sorted(artifact_dir.glob('*')) if p.is_file())
     bundle = load_model(versions)
 except (OSError, ValueError) as exc:
     st.error(f'Could not load your saved model: {exc}')
-    st.info('Run NOTEBOOK_EXPORT_CELL.py as a cell inside your trained notebook. Copy the exported artifacts folder beside app.py. See README.md.')
+    st.info('Check that the three saved .joblib files are inside artifacts/ and data_file.csv is beside app.py. See README.md.')
     st.stop()
 
 with st.sidebar:
@@ -45,11 +46,57 @@ if summary:
     st.caption('Exported notebook test split. Ransomware is the positive class in this UI.')
 else:
     st.info('Export evaluation.json with the notebook cell to show evaluation metrics.')
-single, batch, performance, about = st.tabs(['Single prediction', 'Batch CSV', 'Model performance', 'How it works'])
+pe_upload, single, batch, performance, about = st.tabs([
+    'Upload .exe / .dll', 'Single prediction', 'Batch CSV', 'Model performance', 'How it works'
+])
+
+with pe_upload:
+    st.subheader('Upload a Windows executable or DLL')
+    st.write('Extract static PE-header features and classify them using your existing saved Logistic Regression model.')
+    st.info('**Static analysis only.** The file is read as bytes, never executed or installed. This is an educational prototype, not an antivirus replacement.')
+    st.caption('Maximum upload: 20 MiB. Only Windows PE32/PE32+ files are supported; other formats will be rejected.')
+    st.warning('Avoid uploading real suspected malware to a shared cloud service. For untrusted samples, use an appropriately isolated local analysis environment.')
+    uploaded_pe = st.file_uploader('Select a .exe or .dll file', type=['exe', 'dll'], key='uploaded_pe')
+    if uploaded_pe is not None:
+        try:
+            if uploaded_pe.size > MAX_PE_BYTES:
+                raise PEFormatError('The file exceeds the 20 MiB limit.')
+            with st.spinner('Reading PE headers and extracting static features…'):
+                info = extract_pe_features(uploaded_pe.getvalue())
+                extracted = pd.DataFrame([info.features], columns=FEATURES)
+                outcome = predict(bundle, extracted, threshold).iloc[0]
+            st.divider()
+            if outcome['Prediction'] == 'Ransomware':
+                st.error('Model prediction: Ransomware')
+            else:
+                st.success('Model prediction: Benign')
+            c1, c2, c3 = st.columns(3)
+            c1.metric('Estimated ransomware probability', f"{outcome['Ransomware probability']:.2%}")
+            c2.metric('PE format', info.pe_kind)
+            c3.metric('File size', f'{info.size_bytes / (1024 * 1024):.2f} MiB')
+            st.progress(float(outcome['Ransomware probability']))
+            st.caption(f'File: {uploaded_pe.name} | SHA-256: {info.sha256}')
+            st.caption(f'Applied ransomware decision threshold: {threshold:.0%}. Probabilities are not calibrated guarantees.')
+            if info.is_dll != uploaded_pe.name.lower().endswith('.dll'):
+                st.warning('The PE file header type and filename extension disagree. Classification still uses the extracted PE features.')
+            if bool(outcome['Unseen machine code']):
+                st.warning('This CPU Machine value was not observed during training. The classification may be unreliable.')
+            st.warning('**Experimental file-upload prediction:** Real-file detection accuracy was not measured. ' + info.wallet_scan_note)
+            with st.expander('See extracted features', expanded=True):
+                st.dataframe(extracted.T.rename(columns={0: 'Extracted value'}), width='stretch')
+            safe_file_name = uploaded_pe.name
+            if safe_file_name.lstrip().startswith(('=', '+', '-', '@')):
+                safe_file_name = "'" + safe_file_name
+            export = pd.DataFrame([{'FileName': safe_file_name, **info.features}])
+            st.download_button('Download extracted features (CSV)', export.to_csv(index=False),
+                               file_name='extracted_pe_features.csv', mime='text/csv')
+        except (PEFormatError, ValueError, TypeError) as exc:
+            st.error(f'Unable to analyze this PE file: {exc}')
+
 
 with single:
     st.subheader('Inspect one feature record')
-    st.write('Enter pre-extracted numeric features or load a dataset example. No executable upload is needed.')
+    st.write('Enter pre-extracted numeric features or load a dataset example. To analyze a PE file directly, use the first tab.')
     source = st.selectbox('Starting values', ['Manual entry (zeros)', 'Dataset example: benign', 'Dataset example: ransomware'])
     if source == 'Manual entry (zeros)':
         defaults = dict.fromkeys(FEATURES, 0)
@@ -135,6 +182,6 @@ with about:
 
 At threshold 0.50, labels come directly from the classifier's predict method. Changing the threshold deliberately changes the decision rule.
 
-The included CSV provides UI examples only. Export evaluation.json to record the notebook's actual data source and test results. The uploaded notebook's stored outputs used synthetic data.
+The included CSV provides UI examples only. The supplied evaluation.json records results from a Kagglehub dataset run. The notebook preprocessing has known leakage from fitting its scaler before splitting. The executable upload mode extracts PE headers plus a heuristic BitcoinAddresses indicator; this has not been validated as identical to the original dataset feature-extraction pipeline.
 
-Labels: **0 = ransomware; 1 = benign**. This research app classifies extracted features, not executable files.""")
+Labels: **0 = ransomware; 1 = benign**. Executable uploads are parsed into feature records in memory and then classified; there is no execution, dynamic malware analysis, or guarantee of safety.""")
