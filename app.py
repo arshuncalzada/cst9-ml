@@ -358,9 +358,12 @@ elif page == "Sample predictions":
             actual_label = "Benign" if int(record["Benign"]) == 1 else "Ransomware"
             output_card(outcome, str(record.get("FileName", "Dataset record")), actual_label=actual_label)
             correct = str(outcome["Prediction"]) == actual_label
-            st.success("Prediction matches the dataset label.") if correct else st.warning(
-                "Prediction differs from the dataset label. This is a genuine saved test-set error."
-            )
+            if correct:
+                st.success("Prediction matches the dataset label.")
+            else:
+                st.warning(
+                    "Prediction differs from the dataset label. This is a genuine saved test-set error."
+                )
             sample_csv = pd.DataFrame([record]).to_csv(index=False)
             st.download_button("Download selected sample (CSV)", sample_csv,
                                file_name=f"holdout_sample_{index + 1}.csv", mime="text/csv")
