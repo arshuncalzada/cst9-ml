@@ -81,7 +81,7 @@ def class_donut(raw: pd.DataFrame) -> go.Figure:
         sort=False, direction="clockwise",
     ))
     plot_style(fig, 290)
-    fig.add_annotation(text=f"<b>{len(raw):,}</b><br><span style='font-size:11px;color:#718096'>Total records</span>",
+    fig.add_annotation(text=f"<b>{len(raw):,}</b>",
                        showarrow=False, font=dict(size=22, color=INK))
     fig.update_layout(margin=dict(t=12, b=12, l=12, r=12))
     return fig
@@ -105,7 +105,7 @@ def confusion_heatmap(cm: list[list[int]]) -> go.Figure:
             count = int(matrix[row_i, col_i])
             fig.add_annotation(
                 x=predicted, y=actual, showarrow=False, align="center",
-                text=f"<b>{count:,}</b><br><span style='font-size:11px'>{categories[row_i][col_i]}</span>",
+                text=f"<b>{count:,}</b>",
                 font=dict(size=23, color="white" if count / max(matrix.max(),1) > .62 else INK),
             )
     plot_style(fig, 355)
